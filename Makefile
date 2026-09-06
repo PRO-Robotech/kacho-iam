@@ -1,12 +1,12 @@
 # Copyright (c) PRO-Robotech
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-BINARY         := kacho-iam
-CMD            := ./cmd/kacho-iam
+BINARY         := kaname
+CMD            := ./cmd/kaname
 # Отдельный binary мигратора.
 MIGRATOR_BIN   := kacho-migrator
 MIGRATOR_CMD   := ./cmd/migrator
-IMAGE          := kacho-iam:dev
+IMAGE          := kaname:dev
 
 # Ревизия дерева уезжает в образ аргументом сборки (IMAGE_BUILD_ARGS).
 # Объявление одно на дерево — см. разбор в самом файле.
@@ -48,7 +48,7 @@ export GOLANGCI_LINT_CACHE
 lint:
 	golangci-lint run ./...
 
-# audit-list-filter — CI gate for kacho-iam's listing surface: every method that
+# audit-list-filter — CI gate for kaname's listing surface: every method that
 # hands a page to a caller must narrow it, and must declare HOW. What is checked
 # lives in pkg/listfiltergate; how this service is laid out lives in
 # services/iam/tools/auditlistfilter.
@@ -228,12 +228,16 @@ model-canon-check:
 # ведомость своих, подписавших и машинных личностей — services/iam/cla-ledger.yaml.
 #
 # Вызов: `make -C services/iam cla-check`
+#
+# Путь — ОТ КОРНЯ МОДУЛЯ СЛУЖБЫ: у неё свой go.mod, и подъём в корень монорепо
+# ради пути `./services/iam/...` отказывает — тот модуль этих пакетов не
+# содержит. В конвейере цель не зовётся, поэтому отказ был тихим.
 .PHONY: cla-check
 cla-check:
-	@cd ../.. && go test ./services/iam/tools/clagate/ -count=1 -v
+	@go test ./tools/clagate/ -count=1 -v
 
 # Общая `operations`-таблица из kacho-corelib/migrations/common/0001_operations.sql
-# встроена inline в internal/migrations/0001_initial.sql под схемой kacho_iam.
+# встроена inline в internal/migrations/0001_initial.sql под схемой kaname.
 # Re-копирование common-файла создало бы конфликтующий unqualified
 # public.operations — отсюда no-op.
 docker:
@@ -243,13 +247,13 @@ docker:
 # migrate-* дергают отдельный binary `bin/kacho-migrator`.
 # Зависимость на build-migrator гарантирует, что bin/ актуальный.
 migrate-up: build-migrator
-	KACHO_IAM_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) up
+	KANAME_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) up
 
 migrate-down: build-migrator
-	KACHO_IAM_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) down
+	KANAME_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) down
 
 migrate-status: build-migrator
-	KACHO_IAM_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) status
+	KANAME_DB_PASSWORD=secret bin/$(MIGRATOR_BIN) status
 
 # proto-install-plugins — ставит protoc-плагины в $GOBIN (lookup через $PATH для buf).
 # Доменный proto iam генерируется этими тремя плагинами.
@@ -260,7 +264,7 @@ proto-install-plugins:
 
 # proto-vendor — подтягивает универсальные инфра-протосы из kacho-corelib (единственный
 # источник) в proto/ ТОЛЬКО для buf-резолва импортов доменного proto. В git этих файлов
-# нет (gitignored) — их Go-stubs живут в kacho-corelib / canonical genproto, kacho-iam их
+# нет (gitignored) — их Go-stubs живут в kacho-corelib / canonical genproto, kaname их
 # не владеет и не дублирует. Цель идемпотентна: копирует поверх локальной копии.
 CORELIB_PROTO  := ../kacho-corelib/proto
 VENDORED_PROTOS := \
@@ -291,7 +295,7 @@ proto-gen: proto-vendor
 
 # permission_catalog.json — runtime-embedded grant-catalog для
 # InternalIAMService.ListPermissions / PermissionCatalogService. Файл закоммичен и
-# встроен через //go:embed (internal/apps/kacho/seed/embedded/permission_catalog.json),
+# встроен через //go:embed (internal/apps/kaname/seed/embedded/permission_catalog.json),
 # поэтому iam собирается standalone. Полный catalog по транзитивному набору всех
 # доменных service.proto собирается в api-gateway (catalog god-node) — обновление
 # этого зеркала прилетает оттуда. Локально это no-op.
@@ -302,7 +306,7 @@ proto-gen: proto-vendor
 # расходились ровно тогда, когда синхронизация и требовалась. Теперь цель делает
 # то, что называет, и проверяет результат.
 GATEWAY_CATALOG := ../../gateway/internal/middleware/embed/permission_catalog.json
-IAM_CATALOG_EMBED := internal/apps/kacho/seed/embedded/permission_catalog.json
+IAM_CATALOG_EMBED := internal/apps/kaname/seed/embedded/permission_catalog.json
 .PHONY: sync-permission-catalog
 sync-permission-catalog:
 	@test -f "$(GATEWAY_CATALOG)" || { echo "нет копии шлюза: $(GATEWAY_CATALOG) — нужен полный чекаут монорепо"; exit 1; }

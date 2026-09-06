@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/domain"
-	iamerr "github.com/PRO-Robotech/kacho-iam/internal/errors"
-	"github.com/PRO-Robotech/kacho-iam/internal/handler/iamhooks"
-	"github.com/PRO-Robotech/kacho-iam/internal/service"
+	"github.com/PRO-Robotech/kaname/internal/domain"
+	iamerr "github.com/PRO-Robotech/kaname/internal/errors"
+	"github.com/PRO-Robotech/kaname/internal/handler/iamhooks"
+	"github.com/PRO-Robotech/kaname/internal/service"
 )
 
 // fakeSAPort records the FindByExternalSubject call so the test can assert
@@ -59,7 +59,7 @@ func mustB64URL(b []byte) string {
 }
 
 // mkUnsignedJWT builds a `header.payload.<empty>` token. Hydra has already
-// verified the signature; the kacho-iam handler decodes the claim body only.
+// verified the signature; the kaname handler decodes the claim body only.
 func mkUnsignedJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	hdr, err := json.Marshal(map[string]any{"alg": "RS256", "typ": "JWT"})

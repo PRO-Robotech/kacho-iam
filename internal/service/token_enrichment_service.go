@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/domain"
-	iamerr "github.com/PRO-Robotech/kacho-iam/internal/errors"
+	"github.com/PRO-Robotech/kaname/internal/domain"
+	iamerr "github.com/PRO-Robotech/kaname/internal/errors"
 )
 
 // ErrCredentialExpired — the OAuth2 client behind this token request maps to a
@@ -87,9 +87,9 @@ type TokenEnrichmentUserPort interface {
 // external OIDC assertion `(iss, sub)` plus its own `client_id`; we recover
 // the SA mapping by matching `trusted_subjects[*].issuer` + regex on `sub`).
 type TokenEnrichmentSAPort interface {
-	// LookupByOAuthClientID resolves the kacho-iam SA + OAuth-client mapping
+	// LookupByOAuthClientID resolves the kaname SA + OAuth-client mapping
 	// from a Hydra `client_id`. Returns iamerr.ErrNotFound when the client
-	// id is unknown (e.g. legacy Hydra registration outside kacho-iam).
+	// id is unknown (e.g. legacy Hydra registration outside kaname).
 	LookupByOAuthClientID(ctx context.Context, hydraClientID domain.OAuthClientID) (domain.ServiceAccountOAuthClient, error)
 	// GetServiceAccount fetches the SA referenced by a mapping row.
 	GetServiceAccount(ctx context.Context, id domain.ServiceAccountID) (domain.ServiceAccount, error)
@@ -106,7 +106,7 @@ type TokenEnrichmentSAPort interface {
 // principal_type=user + principal_id/account_id claims — the net-new mapping that
 // lets a personal token authenticate as `user:<id>` rather than a service account).
 type TokenEnrichmentUserTokenPort interface {
-	// LookupByOAuthClientID resolves the kacho-iam User-token (UserOAuthClient)
+	// LookupByOAuthClientID resolves the kaname User-token (UserOAuthClient)
 	// mapping from a Hydra `client_id`. Returns iamerr.ErrNotFound when the
 	// client id is not a User-token client.
 	LookupByOAuthClientID(ctx context.Context, hydraClientID domain.OAuthClientID) (domain.UserOAuthClient, error)
@@ -138,7 +138,7 @@ type TokenHookContext struct {
 	CnfX5tS256 string
 	// OAuthClientID — `request.client_id` as Hydra knows it. For
 	// client_credentials this equals `subject`; for jwt-bearer (Phase 3b
-	// federation IN) this is the kacho-iam-issued client_id while `subject`
+	// federation IN) this is the kaname-issued client_id while `subject`
 	// is the EXTERNAL assertion sub (e.g. `repo:acme/infra:ref:refs/heads/
 	// main`). Empty when the handler cannot recover it.
 	OAuthClientID string
@@ -217,6 +217,37 @@ type TokenEnrichmentService struct {
 // time.Now.
 func NewTokenEnrichmentService(cfg TokenEnrichmentConfig, users TokenEnrichmentUserPort) *TokenEnrichmentService {
 	return &TokenEnrichmentService{cfg: cfg, users: users, now: time.Now}
+}
+
+// WithClock injects the clock this service stamps `kacho_issued_at` from. A nil
+// func keeps time.Now.
+//
+// It exists because the claim set carries a value derived from the clock, and
+// the two issuance lanes (the provider's token hook and its refresh hook) must
+// be comparable BYTE FOR BYTE on one principal. Two clocks would let that one
+// value diverge — and the divergence would be a property of the probe, not of
+// the product, which is the shape of a check that cannot tell the two apart.
+// One instance, one clock, both lanes: whatever still differs belongs to the
+// lanes.
+func (s *TokenEnrichmentService) WithClock(now func() time.Time) *TokenEnrichmentService {
+	if now != nil {
+		s.now = now
+	}
+	return s
+}
+
+// UserClaims assembles the claim set for a User subject the CALLER has already
+// resolved.
+//
+// This is the same producer EnrichClaims uses on its user branch, exported so
+// the refresh lane can reach it. The refresh hook resolves the subject itself —
+// it has to, its revoke-all gate weighs EVERY row of the identity — and used to
+// assemble the claim set itself as well. That second assembly was a second place
+// about one subject: a change to the device-compliance derivation in the service
+// would not have reached the refresh lane, and one person would have been handed
+// different claims at issuance and at renewal, with each lane's own probe green.
+func (s *TokenEnrichmentService) UserClaims(u domain.User, subject string, hookCtx TokenHookContext) map[string]any {
+	return s.userClaims(u, subject, hookCtx)
 }
 
 // WithSAPort wires the ServiceAccount lookup port enabling Phase 3a SA-token
@@ -417,7 +448,7 @@ func (s *TokenEnrichmentService) EnrichClaims(ctx context.Context, subject strin
 //     inserted with no expiry, as is every row predating the SA-key TTL knobs;
 //     reading nil as invalid would take the cluster-admin credential and all
 //     legacy keys offline at once. Bounding those lifetimes is the issuer's job
-//     (KACHO_IAM_SAKEY_DEFAULT_TTL), not a retroactive reinterpretation here.
+//     (KANAME_SAKEY_DEFAULT_TTL), not a retroactive reinterpretation here.
 //   - the boundary instant is EXPIRED (`!After(now)`, not `Before(now)`): at
 //     exactly expires_at the credential is spent.
 //
@@ -435,8 +466,8 @@ func (s *TokenEnrichmentService) userClaims(primary domain.User, subject string,
 		"kacho_user_id":           string(primary.ID),
 		"kacho_active_account":    string(primary.AccountID),
 		"kacho_groups":            []string{},
-		"kacho_principal_type":    "user",
-		"kacho_principal_id":      string(primary.ID),
+		domain.ClaimPrincipalType: "user",
+		domain.ClaimPrincipalID:   string(primary.ID),
 		"kacho_account_id":        string(primary.AccountID),
 		"kacho_device_compliance": "unknown",
 		"kacho_mfa_at":            int64(0),
@@ -477,8 +508,8 @@ func (s *TokenEnrichmentService) saClaims(soc domain.ServiceAccountOAuthClient, 
 	claims := map[string]any{
 		"kacho_external_id":       subject,
 		"kacho_hydra_client_id":   subject,
-		"kacho_principal_type":    "service_account",
-		"kacho_principal_id":      string(soc.SvaID),
+		domain.ClaimPrincipalType: "service_account",
+		domain.ClaimPrincipalID:   string(soc.SvaID),
 		"kacho_sa_key_id":         string(soc.ID),
 		"kacho_device_compliance": "unknown",
 		"kacho_jkt":               hookCtx.CnfJkt,
@@ -505,8 +536,8 @@ func (s *TokenEnrichmentService) federatedClaims(soc domain.ServiceAccountOAuthC
 		// kacho_external_id stays the external assertion sub for audit.
 		"kacho_external_id":        externalSub,
 		"kacho_hydra_client_id":    hookCtx.OAuthClientID,
-		"kacho_principal_type":     "service_account",
-		"kacho_principal_id":       string(soc.SvaID),
+		domain.ClaimPrincipalType:  "service_account",
+		domain.ClaimPrincipalID:    string(soc.SvaID),
 		"kacho_sa_key_id":          string(soc.ID),
 		"kacho_federation_issuer":  hookCtx.ExternalIssuer,
 		"kacho_federation_subject": externalSub,
@@ -535,8 +566,8 @@ func (s *TokenEnrichmentService) userTokenClaims(uoc domain.UserOAuthClient, u d
 	claims := map[string]any{
 		"kacho_external_id":       subject,
 		"kacho_hydra_client_id":   subject,
-		"kacho_principal_type":    "user",
-		"kacho_principal_id":      string(uoc.UserID),
+		domain.ClaimPrincipalType: "user",
+		domain.ClaimPrincipalID:   string(uoc.UserID),
 		"kacho_user_id":           string(uoc.UserID),
 		"kacho_user_token_id":     string(uoc.ID),
 		"kacho_device_compliance": "unknown",
@@ -597,7 +628,7 @@ func (s *TokenEnrichmentService) userTokenClaims(uoc domain.UserOAuthClient, u d
 func (s *TokenEnrichmentService) MinimalClaims(subject string) map[string]any {
 	return map[string]any{
 		"kacho_external_id":       subject,
-		"kacho_principal_type":    "user",
+		domain.ClaimPrincipalType: "user",
 		"kacho_device_compliance": "unknown",
 		"kacho_issuer":            s.cfg.HydraIssuer,
 		"kacho_audience":          s.cfg.Domain,

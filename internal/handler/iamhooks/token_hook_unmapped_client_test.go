@@ -8,7 +8,7 @@
 //
 //   - MACHINE token request — `client_credentials` / `jwt-bearer`, or any request
 //     whose subject is the OAuth client itself. The credential presented is the
-//     client registration; every legitimate one of these was created by kacho-iam
+//     client registration; every legitimate one of these was created by kaname
 //     together with its mapping row (SA key, user token, bootstrap, federation),
 //     so "no mapping" means "not a kacho credential" and the only correct answer
 //     is a refusal.
@@ -34,17 +34,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/domain"
-	iamerr "github.com/PRO-Robotech/kacho-iam/internal/errors"
-	"github.com/PRO-Robotech/kacho-iam/internal/handler/iamhooks"
-	"github.com/PRO-Robotech/kacho-iam/internal/service"
+	"github.com/PRO-Robotech/kaname/internal/domain"
+	iamerr "github.com/PRO-Robotech/kaname/internal/errors"
+	"github.com/PRO-Robotech/kaname/internal/handler/iamhooks"
+	"github.com/PRO-Robotech/kaname/internal/service"
 )
 
 // ─────────────────── programmable ports (production wiring shape) ───────────────────
 
 // stubMappedSA — SA-mapping lookup. Zero value resolves NOTHING: that is exactly
 // what the reader sees after a key is revoked (the row is deleted) and what it
-// sees for a client that kacho-iam never registered.
+// sees for a client that kaname never registered.
 type stubMappedSA struct {
 	soc   domain.ServiceAccountOAuthClient
 	found bool

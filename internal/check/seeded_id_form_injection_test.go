@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/PRO-Robotech/kaname/internal/domain"
 )
 
 // Доказательство способности гейта посева УПАСТЬ — и СМОЛЧАТЬ.
@@ -25,18 +27,36 @@ import (
 
 const (
 	// synthGoodSeed — законный посев: слитная форма 20 символов.
-	synthGoodSeed = "INSERT INTO kacho_iam.roles (id, name, permissions) " +
+	synthGoodSeed = "INSERT INTO kaname.roles (id, name, permissions) " +
 		"VALUES ('rol000000000sysadmin', 'kacho-system.admin', '[]');\n"
 	// synthUnderscoreSeed — ЗАКОННЫЙ близнец: форма через подчёркивание, 21 символ.
-	synthUnderscoreSeed = "INSERT INTO kacho_iam.cluster_admin_grants (id, cluster_id) " +
+	synthUnderscoreSeed = "INSERT INTO kaname.cluster_admin_grants (id, cluster_id) " +
 		"VALUES ('cag_5f4510f927a011885', 'cluster_kacho_root');\n"
 	// synthForeignFamilySeed — ЗАКОННЫЙ близнец: семейство таблицей не названо.
-	synthForeignFamilySeed = "INSERT INTO kacho_iam.clusters (id, name) " +
+	synthForeignFamilySeed = "INSERT INTO kaname.clusters (id, name) " +
 		"VALUES ('cluster_kacho_root', 'root');\n"
-	// synthBadSeed — ДЕФЕКТ: слитная форма длиной 21.
-	synthBadSeed = "INSERT INTO kacho_iam.roles (id, name, permissions) " +
-		"VALUES ('rol000000000sysviewer', 'kacho-system.viewer', '[]');\n"
+	// synthBadSeedID — ДЕФЕКТ: слитная форма длиной 21, НИ ОДНОЙ миграцией не
+	// посеянная и потому перечнем `domain.SeededResourceIDs()` не названная.
+	//
+	// Здесь стоял `rol000000000sysviewer` — и он перестал быть дефектом, когда
+	// исход #1808 был выбран: посеянный литерал теперь ПРИНИМАЕТСЯ проверкой пути
+	// запроса. Инъекция на нём стала бы вакуумной, доказывая способность падать
+	// тем, что падать больше не обязано. Отсюда правило: инъектируемый литерал
+	// обязан быть ВНЕ перечня, и это утверждается ниже, а не подразумевается.
+	synthBadSeedID = "rol000000000sysvi3w3r"
+	// synthBadSeed — тот же дефект в форме посева.
+	synthBadSeed = "INSERT INTO kaname.roles (id, name, permissions) " +
+		"VALUES ('" + synthBadSeedID + "', 'kacho-system.viewer', '[]');\n"
 )
+
+// TestSeededIDInjectionInjectsSomethingStillUnlawful — предпосылка инъекций ниже.
+// Литерал, названный закрытым перечнем посеянного, проверкой ПРИНИМАЕТСЯ; подай
+// его инъекция — она зеленела бы и ничего не доказывала.
+func TestSeededIDInjectionInjectsSomethingStillUnlawful(t *testing.T) {
+	require.False(t, domain.IsSeededResourceID(synthBadSeedID),
+		"инъектируемый литерал назван перечнем посеянного — инъекция стала вакуумной")
+	require.Len(t, synthBadSeedID, 21, "дефект оси длины обязан остаться дефектом длины")
+}
 
 func synthMigrationCorpus() map[string]string {
 	return map[string]string{
@@ -64,7 +84,7 @@ func TestSeededIDGateRedsOnAMalformedSeed(t *testing.T) {
 	findings, c := auditSeededIDs(corpus, nil)
 
 	require.Len(t, findings, 1, "негодный посев оставил гейт зелёным")
-	require.Contains(t, findings[0], "rol000000000sysviewer")
+	require.Contains(t, findings[0], synthBadSeedID)
 	require.Contains(t, findings[0], "20260101000000_x.sql")
 	require.Contains(t, findings[0], "недостижим по id")
 	// Законные близнецы целы: красное пришло РОВНО от снятого.
@@ -77,7 +97,7 @@ func TestSeededIDGateForgivesOnlyTheNamedPair(t *testing.T) {
 	corpus := synthMigrationCorpus()
 	corpus["0001_initial.sql"] += synthBadSeed
 	ledger := []seededSeedException{{
-		file: "0001_initial.sql", literal: "rol000000000sysviewer", reason: "ban #5, задача #1808",
+		file: "0001_initial.sql", literal: synthBadSeedID, reason: "синтетика инъекции",
 	}}
 
 	findings, c := auditSeededIDs(corpus, ledger)
@@ -95,7 +115,7 @@ func TestSeededIDGateForgivesOnlyTheNamedPair(t *testing.T) {
 // TestSeededIDLedgerSelfExpires — послабление обязано ИСТЕЧЬ САМО.
 func TestSeededIDLedgerSelfExpires(t *testing.T) {
 	ledger := []seededSeedException{{
-		file: "0001_initial.sql", literal: "rol000000000sysviewer", reason: "ban #5, задача #1808",
+		file: "0001_initial.sql", literal: synthBadSeedID, reason: "синтетика инъекции",
 	}}
 
 	findings, c := auditSeededIDs(synthMigrationCorpus(), ledger)
@@ -110,7 +130,7 @@ func TestSeededIDLedgerSelfExpires(t *testing.T) {
 func TestSeededIDGateCountsWhatItCouldNotParse(t *testing.T) {
 	corpus := map[string]string{
 		"20260101000000_x.sql": synthGoodSeed +
-			"INSERT INTO kacho_iam.roles\n       (id, name)\nSELECT 'rol000000000sysviewer', 'x';\n",
+			"INSERT INTO kaname.roles\n       (id, name)\nSELECT '" + synthBadSeedID + "', 'x';\n",
 	}
 
 	findings, c := auditSeededIDs(corpus, nil)

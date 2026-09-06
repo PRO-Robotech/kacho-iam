@@ -181,7 +181,6 @@ type group
 # tuples with any other object id (P3-D17).
 #   - system_admin  — standing cluster administrator.
 #   - system_viewer — read-only cluster catalog viewer.
-#   - console       — cluster console access, MFA-gated.
 #   - any_admin     — alias for system_admin (kept as a relation name so
 #                     hierarchy `any_admin from cluster` references stay
 #                     valid across many downstream type definitions).
@@ -214,7 +213,25 @@ type cluster
     # жизнь. Снятие убирает ВИД защиты там, где защиты не было.
     #
     # Решение и его цена — services/iam/docs/engineering/architecture/relations-without-readers-withdrawn.md
-    define console: [user with mfa_fresh, service_account with mfa_fresh]
+    # ЗДЕСЬ СТОЯЛО `console`, И ОНО СНЯТО (#1820). Отношение объявлялось на
+    # КЛАСТЕРЕ и не читалось ничем: записи каталога прав с ним не было ни одной,
+    # ни одно объявление модели его не выводило (ни `or console`, ни
+    # `console from cluster`), и путь запроса его не спрашивал. Дома у него не
+    # было by construction: манифест домена его не объявляет — оно не
+    # принадлежит модулю; каталог прав не называет — у него нет RPC.
+    #
+    # ПОЧЕМУ СНЯТО, А НЕ ОСТАВЛЕНО БРОНЬЮ — тот же довод, что у `billing_admin`
+    # выше: выдать его было НЕЧЕМ. Роль отображается в ярусы
+    # `viewer`/`editor`/`admin`, правило роли даёт только глаголы `v_*`; пути,
+    # которым кортеж с `console` на кластере попал бы в хранилище, не существует
+    # ни одного, и проверка против него отвечала бы «нет» всем и всегда.
+    #
+    # ЧТО ЭТО НЕ ЗАТРАГИВАЕТ: `console` на типе `compute_instance` — ДРУГОЕ
+    # отношение, живое, и у него свой предмет (#2056, требование усиленного
+    # входа исполняет край).
+    #
+    # Разбор всех отношений якорей `cluster` и `account` —
+    # services/iam/docs/engineering/architecture/anchor-relations-adjudicated.md
     define any_admin: system_admin
     # KAC-178 §3: viewer — общий read-relation для глобальных reference-данных
     # (compute.Region, compute.Zone, …), к которым каталог permissions
@@ -357,7 +374,7 @@ type account
     # `iam_user.identity_remover`. Здесь закрывается вторая.
     #
     # ПОЧЕМУ ЭТО ОТНОШЕНИЕ АККАУНТА, А НЕ ЛИЧНОСТИ. Предмет действия — ЧЛЕНСТВО,
-    # то есть участие человека в ОДНОМ аккаунте (`kacho_iam.memberships`), а не
+    # то есть участие человека в ОДНОМ аккаунте (`kaname.memberships`), а не
     # строка `iam_user`, которая у него одна на всю платформу. Отношение на объекте
     # личности немедленно вернуло бы класс, закрытый #1102: держатель права на
     # глобальную строку распоряжается ею во ВСЕХ её аккаунтах. Область решения —
@@ -578,7 +595,7 @@ type iam_user
     # ПОЧЕМУ ЭТО НЕ ПРАВО АККАУНТА. Личность ГЛОБАЛЬНА — одна строка `iam_user` на
     # все аккаунты человека (миграция
     # 20260822234500_identity_rows_merge_and_rights_travel), а звено «личность →
-    # аккаунт» вердикт берёт из ЧЛЕНСТВА (`kacho_iam.memberships`), которых у
+    # аккаунт» вердикт берёт из ЧЛЕНСТВА (`kaname.memberships`), которых у
     # человека может быть несколько. Значит держатель права уровня ОДНОГО аккаунта
     # видел бы удостоверения человека ЦЕЛИКОМ — включая те, которыми он действует
     # в аккаунтах, к которым этот держатель отношения не имеет. Директива владельца
@@ -633,7 +650,7 @@ type iam_user
     # ПОЧЕМУ ЭТО НЕ ПРАВО АККАУНТА — то же основание, что у `token_reader`.
     # Личность ГЛОБАЛЬНА (одна строка `iam_user` на все аккаунты человека,
     # миграция 20260822234500_identity_rows_merge_and_rights_travel), а звено
-    # «личность → аккаунт» вердикт берёт из ЧЛЕНСТВА (`kacho_iam.memberships`),
+    # «личность → аккаунт» вердикт берёт из ЧЛЕНСТВА (`kaname.memberships`),
     # которых у человека может быть несколько. Держатель права уровня ОДНОГО
     # аккаунта читал бы историю сессий человека ЦЕЛИКОМ — включая сессии,
     # которыми тот действовал в аккаунтах, к этому держателю отношения не
@@ -746,7 +763,7 @@ type iam_user
     # ПОЧЕМУ ЭТО НЕ ПРАВО АККАУНТА — прямее, чем у меток. Запрет пишется в
     # состояние ГЛОБАЛЬНОЙ строки, поэтому останавливает выдачу удостоверений
     # человеку ВЕЗДЕ, а не в том аккаунте, откуда его нажали. Это разобрано в
-    # `services/iam/internal/apps/kacho/api/user/set_blocked.go` и наблюдаемо
+    # `services/iam/internal/apps/kaname/api/user/set_blocked.go` и наблюдаемо
     # утверждено пробой `api/audit/user_block_integration_test.go`
     # (`TestUserBlock_ReachesEveryAccountBecauseThePersonIsOneRow`). Распорядителю
     # аккаунта для его собственной задачи — «этот человек больше не работает у

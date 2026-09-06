@@ -10,7 +10,7 @@
 // задаёт пообъектный вопрос по записи каталога прав, а сам сервис на своих
 // слушателях этот вопрос по большей части не повторяет. Код iam говорит это
 // прямым текстом — «iam does NOT re-ReBAC the end user on its own listeners»
-// (services/iam/cmd/kacho-iam/serve.go, оба слушателя).
+// (services/iam/cmd/kaname/serve.go, оба слушателя).
 //
 // Пока iam стоит за нашим краем, это защитимо. Вынесенный в чужое облако iam
 // края не имеет by construction, и каждый публичный RPC без собственного
@@ -119,6 +119,9 @@ type Verdict struct {
 	// Package — каталог пакета, обслуживающего RPC, относительно корня дерева.
 	// Пуст, если обслуживающий пакет не разрешился (Unresolved).
 	Package string
+	// ExemptReason — причина освобождения, объявленная контрактом
+	// (`exempt_reason`). Непуста только у освобождённых RPC.
+	ExemptReason string
 	// Evidence — имя вызова, по которому вынесен исход gated/selfonly. Пусто у
 	// остальных категорий.
 	Evidence string
@@ -253,9 +256,25 @@ const relationPortArgs = 4
 // обходом, и вызывающий обязан на нём падать сам: «беспредметно» и «чисто»
 // различает он, а не эта функция.
 func Collect(root string) (Census, error) {
-	return CollectFrom(
-		filepath.Join(root, "proto", "kacho", "cloud", "iam", "v1"),
-		filepath.Join(root, "services", "iam", "cmd", "kacho-iam"),
+	// Каталоги контракта — ВСЕ, чьи службы служба поднимает на публичном
+	// слушателе, а не один собственный.
+	//
+	// Пока каталог был один, население переписи (78 RPC собственного контракта)
+	// было УЖЕ населения публичной поверхности: маршрут квот и два маршрута
+	// операции обслуживаются тем же слушателем, а спрошены не были. Утверждение
+	// «публичных RPC без двери ноль» верно ровно для того, что осмотрено, — и
+	// три неосмотренных маршрута делали его уже, чем оно читается.
+	//
+	// Перечень обязан совпадать с пакетами карты прав двери
+	// (`authzguard.OwnDoorProtoPackages`): дверь их уже знает, а перепись не
+	// спрашивала — отсюда и расхождение «записей карты 119 против осмотренных 78».
+	return collectFromDirs(
+		[]string{
+			filepath.Join(root, "proto", "kacho", "cloud", "iam", "v1"),
+			filepath.Join(root, "proto", "kacho", "cloud", "operation"),
+			filepath.Join(root, "proto", "kacho", "cloud", "quota", "v1"),
+		},
+		filepath.Join(root, "services", "iam", "cmd", "kaname"),
 		root,
 	)
 }
@@ -268,9 +287,14 @@ func Collect(root string) (Census, error) {
 // дескрипторов, влинкованных в процесс, — и это правильно: инъекция обязана
 // менять РОВНО ОДИН факт, а именно наличие двери у подаваемого RPC.
 func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
+	return collectFromDirs([]string{protoDir}, cmdDir, root)
+}
+
+// collectFromDirs — тот же обход по нескольким каталогам контракта.
+func collectFromDirs(protoDirs []string, cmdDir, root string) (Census, error) {
 	var c Census
 
-	rpcs, protoFiles, err := declaredRPCs(protoDir)
+	rpcs, protoFiles, err := declaredRPCs(protoDirs)
 	if err != nil {
 		return c, fmt.Errorf("контракт iam: %w", err)
 	}
@@ -279,7 +303,7 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 		c.RPCsDeclared += len(methods)
 	}
 
-	publicSvcs, err := publicServiceFields(cmdDir)
+	publicSvcs, directPkg, err := publicServiceFields(cmdDir)
 	if err != nil {
 		return c, fmt.Errorf("точка регистрации: %w", err)
 	}
@@ -296,6 +320,11 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 	}
 	sort.Strings(svcNames)
 
+	reasons, err := exemptReasons()
+	if err != nil {
+		return c, err
+	}
+
 	door, err := doorCoverage()
 	if err != nil {
 		return c, fmt.Errorf("карта прав собственной двери: %w", err)
@@ -308,6 +337,11 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 		sort.Strings(methods)
 		field := publicSvcs[svc]
 		importPath, okPkg := fieldPkg[field]
+		if !okPkg {
+			// Обработчик собран конструктором своего пакета — путь известен из
+			// алиаса импорта, а поля сборки у него нет вовсе.
+			importPath, okPkg = directPkg[svc]
+		}
 		var idx *pkgIndex
 		if okPkg {
 			if cached, hit := pkgCache[importPath]; hit {
@@ -353,9 +387,51 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 					Evidence: kind.evidence,
 				})
 			case doorExempt.name:
+				// Освобождение — не молчание: у него обязан быть решатель на
+				// пути обслуживания, и какой именно, задаёт объявленная
+				// причина. Разбор — exempt.go.
+				reason := reasons[rpc]
+				if reason == reasonInternalListener {
+					// Контракт заявил ВНУТРЕННИЙ слушатель, регистрация —
+					// публичный. Это либо ban #6, либо неверная причина; ни то,
+					// ни другое не снимается никаким решателем.
+					c.Verdicts = append(c.Verdicts, Verdict{
+						RPC: rpc, Category: CategoryUngated, Package: relPkg,
+						ExemptReason: reason,
+						Evidence: "контракт освободил RPC признаком ВНУТРЕННЕГО слушателя (`" +
+							reason + "`), а зарегистрирован он на ПУБЛИЧНОМ",
+					})
+					continue
+				}
+				matcher, knownReason := matcherForReason(reason)
+				if !knownReason {
+					// Причина не названа либо перечню неизвестна: вердикта по
+					// такому RPC нет ни в одну сторону.
+					c.Unresolved = append(c.Unresolved, rpc)
+					continue
+				}
+				if idx == nil {
+					c.Unresolved = append(c.Unresolved, rpc)
+					continue
+				}
+				deciderEvidence, deciderResolved := idx.findOnServingPath(m, matcher)
+				if !deciderResolved {
+					c.Unresolved = append(c.Unresolved, rpc)
+					continue
+				}
+				if deciderEvidence == "" {
+					c.Verdicts = append(c.Verdicts, Verdict{
+						RPC: rpc, Category: CategoryUngated, Package: relPkg,
+						ExemptReason: reason,
+						Evidence: "освобождение `" + reason + "` объявлено, а решателя " +
+							"требуемой им формы на пути обслуживания нет",
+					})
+					continue
+				}
 				c.Verdicts = append(c.Verdicts, Verdict{
 					RPC: rpc, Category: CategoryExempt, Package: relPkg,
-					Evidence: "контракт объявил `<exempt>`",
+					ExemptReason: reason,
+					Evidence:     deciderEvidence + "; освобождение `" + reason + "`",
 				})
 			case doorScopeFiltered.name:
 				// Дверь единичного вопроса тут не задаёт намеренно — значит его
@@ -399,7 +475,7 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 
 // МОДУЛЕЙ В ДЕРЕВЕ ДВА, И ОТОБРАЖЕНИЕ ОБЯЗАНО ЗНАТЬ ОБА.
 //
-// Служба несёт свой `go.mod` (`github.com/PRO-Robotech/kacho-iam`) — она
+// Служба несёт свой `go.mod` (`github.com/PRO-Robotech/kaname`) — она
 // выносится отдельным репозиторием. Отрезание ОДНОГО префикса перестало
 // переводить путь импорта в путь дерева: для собственных пакетов службы
 // `TrimPrefix` не срабатывал вовсе, путь оставался целым, каталог не находился,
@@ -407,7 +483,7 @@ func CollectFrom(protoDir, cmdDir, root string) (Census, error) {
 // чистота — это пустой обход, и падать на нём обязан вызывающий.
 const (
 	rootModulePrefix    = "github.com/PRO-Robotech/kacho/"
-	serviceModulePrefix = "github.com/PRO-Robotech/kacho-iam/"
+	serviceModulePrefix = "github.com/PRO-Robotech/kaname/"
 	serviceTreePrefix   = "services/iam/"
 )
 
@@ -435,20 +511,39 @@ var (
 // Комментарии снимаются ДО разбора: слово rpc стоит в объяснениях этого же
 // дерева, и счёт по сырой строке завысил бы знаменатель переписи — то есть
 // сделал бы покрытие хуже, чем оно есть, на величину собственной прозы.
-func declaredRPCs(dir string) (map[string][]string, int, error) {
+func declaredRPCs(dirs []string) (map[string][]string, int, error) {
+	out := map[string][]string{}
+	files := 0
+	for _, dir := range dirs {
+		n, derr := declaredRPCsIn(dir, out)
+		if derr != nil {
+			return nil, 0, derr
+		}
+		files += n
+	}
+	if files == 0 {
+		return nil, 0, fmt.Errorf("в %s нет файлов контракта", strings.Join(dirs, ", "))
+	}
+	return out, files, nil
+}
+
+// declaredRPCsIn читает один каталог контракта, дописывая найденное в out.
+func declaredRPCsIn(dir string, out map[string][]string) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
-	out := map[string][]string{}
 	files := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".proto") {
 			continue
 		}
+		// #nosec G304 -- e пришло из os.ReadDir(dir) строкой выше: e.Name() есть имя
+		// записи ЭТОГО каталога и сепаратора не содержит by construction, поэтому
+		// join за dir не выходит. Каталог контракта задаёт вызывающий.
 		body, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
 		if rerr != nil {
-			return nil, 0, rerr
+			return 0, rerr
 		}
 		files++
 		svc := ""
@@ -469,10 +564,7 @@ func declaredRPCs(dir string) (map[string][]string, int, error) {
 			}
 		}
 	}
-	if files == 0 {
-		return nil, 0, fmt.Errorf("в %s нет файлов контракта", dir)
-	}
-	return out, files, nil
+	return files, nil
 }
 
 // stripProtoComments снимает // и /* */ вне строковых литералов.
@@ -529,50 +621,62 @@ func stripProtoComments(src string) string {
 //
 // Судится ИСХОД: то, что зарегистрировано на публичном слушателе, публично —
 // независимо от того, как служба названа.
-func publicServiceFields(cmdDir string) (map[string]string, error) {
+func publicServiceFields(cmdDir string) (map[string]string, map[string]string, error) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, cmdDir, notTestFile, parser.SkipObjectResolution)
+	files, err := parseDirFiles(fset, cmdDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := map[string]string{}
+	direct := map[string]string{}
 	found := false
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, decl := range f.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Name.Name != "registerPublicServices" || fn.Body == nil {
-					continue
-				}
-				found = true
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, isCall := n.(*ast.CallExpr)
-					if !isCall {
-						return true
-					}
-					sel, isSel := call.Fun.(*ast.SelectorExpr)
-					if !isSel {
-						return true
-					}
-					svc, okName := serviceFromRegister(sel.Sel.Name)
-					if !okName || len(call.Args) < 2 {
-						return true
-					}
-					if field, okField := servicesField(call.Args[1]); okField {
-						out[svc] = field
-					}
-					return true
-				})
+	for _, f := range files {
+		aliases := importAliases(f)
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "registerPublicServices" || fn.Body == nil {
+				continue
 			}
+			found = true
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, isCall := n.(*ast.CallExpr)
+				if !isCall {
+					return true
+				}
+				sel, isSel := call.Fun.(*ast.SelectorExpr)
+				if !isSel {
+					return true
+				}
+				svc, okName := serviceFromRegister(sel.Sel.Name)
+				if !okName || len(call.Args) < 2 {
+					return true
+				}
+				if field, okField := servicesField(call.Args[1]); okField {
+					out[svc] = field
+					return true
+				}
+				// ВТОРАЯ законная форма: обработчик не лежит полем сборки, а
+				// собирается конструктором своего пакета прямо в регистрации.
+				// Распознаватель, знающий одну форму, не даёт ни красного, ни
+				// зелёного — он МОЛЧИТ, и служба выпадает из населения переписи
+				// целиком. Так и было: служба операций не осматривалась вовсе,
+				// а «без двери ноль» читалось как утверждение обо всей публичной
+				// поверхности.
+				if path, okPath := constructorPackage(call.Args[1], aliases); okPath {
+					out[svc] = ""
+					direct[svc] = path
+				}
+				return true
+			})
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("в %s не найдена registerPublicServices", cmdDir)
+		return nil, nil, fmt.Errorf("в %s не найдена registerPublicServices", cmdDir)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("registerPublicServices не регистрирует ни одной службы")
+		return nil, nil, fmt.Errorf("registerPublicServices не регистрирует ни одной службы")
 	}
-	return out, nil
+	return out, direct, nil
 }
 
 // serviceFromRegister превращает RegisterXServiceServer → XService.
@@ -599,44 +703,65 @@ func servicesField(arg ast.Expr) (string, bool) {
 	return sel.Sel.Name, true
 }
 
+// constructorPackage достаёт путь импорта пакета из выражения вида
+// pkgalias.NewHandler(...).
+//
+// Это вторая законная форма записи обработчика в регистрации, и она столь же
+// обычна, как поле сборки: обработчик, у которого нет собственной настройки,
+// собирается на месте.
+func constructorPackage(arg ast.Expr, aliases map[string]string) (string, bool) {
+	call, ok := arg.(*ast.CallExpr)
+	if !ok {
+		return "", false
+	}
+	sel, isSel := call.Fun.(*ast.SelectorExpr)
+	if !isSel {
+		return "", false
+	}
+	ident, isIdent := sel.X.(*ast.Ident)
+	if !isIdent {
+		return "", false
+	}
+	path, okPath := aliases[ident.Name]
+	return path, okPath
+}
+
 // handlerPackages читает объявление структуры services и возвращает
 // поле → путь импорта пакета, чей тип в этом поле лежит.
 func handlerPackages(cmdDir string) (map[string]string, error) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, cmdDir, notTestFile, parser.SkipObjectResolution)
+	files, err := parseDirFiles(fset, cmdDir)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]string{}
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			aliases := importAliases(f)
-			for _, decl := range f.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok || gen.Tok != token.TYPE {
+	for _, f := range files {
+		aliases := importAliases(f)
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts, isTS := spec.(*ast.TypeSpec)
+				if !isTS || ts.Name.Name != "services" {
 					continue
 				}
-				for _, spec := range gen.Specs {
-					ts, isTS := spec.(*ast.TypeSpec)
-					if !isTS || ts.Name.Name != "services" {
+				st, isStruct := ts.Type.(*ast.StructType)
+				if !isStruct {
+					continue
+				}
+				for _, field := range st.Fields.List {
+					alias, okAlias := selectorPackage(field.Type)
+					if !okAlias {
 						continue
 					}
-					st, isStruct := ts.Type.(*ast.StructType)
-					if !isStruct {
+					path, okPath := aliases[alias]
+					if !okPath {
 						continue
 					}
-					for _, field := range st.Fields.List {
-						alias, okAlias := selectorPackage(field.Type)
-						if !okAlias {
-							continue
-						}
-						path, okPath := aliases[alias]
-						if !okPath {
-							continue
-						}
-						for _, nm := range field.Names {
-							out[nm.Name] = path
-						}
+					for _, nm := range field.Names {
+						out[nm.Name] = path
 					}
 				}
 			}
@@ -680,6 +805,32 @@ func selectorPackage(t ast.Expr) (string, bool) {
 	return ident.Name, true
 }
 
-func notTestFile(fi os.FileInfo) bool {
-	return !strings.HasSuffix(fi.Name(), "_test.go")
+// parseDirFiles — не-тестовые файлы Go каталога, разобранные.
+//
+// Замена `parser.ParseDir`, снятой с поддержки. Она группирует файлы по ПАКЕТАМ,
+// а группировка здесь не читается ни одним вызывающим: все три обходят
+// `pkg.Files` плоско. Заодно уходит недетерминизм — порядок обхода карты пакетов
+// в Go случаен, а `os.ReadDir` отдаёт имена отсортированными, и вход проверки
+// становится воспроизводимым.
+//
+// Фильтр тестовых файлов — тот же, что был у снятого вызова: разбор судит
+// прод-код, и проба, лежащая рядом, его утверждением не является.
+func parseDirFiles(fset *token.FileSet, dir string) ([]*ast.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*ast.File, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
+		if perr != nil {
+			return nil, perr
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }

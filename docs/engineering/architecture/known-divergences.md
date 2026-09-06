@@ -1,7 +1,7 @@
-# Known divergences — kacho-iam
+# Known divergences — kaname
 
 Deliberate, reviewed deviations from a project-wide convention that are **not**
-defects. Each entry states the convention, why kacho-iam diverges, why it is
+defects. Each entry states the convention, why kaname diverges, why it is
 safe, and what would be required to converge.
 
 ---
@@ -10,9 +10,9 @@ safe, and what would be required to converge.
 
 **Convention** (evgeniy regime): service configuration is loaded via
 `viper` + `mapstructure` from YAML — no `envconfig` struct-tags.
-`internal/apps/kacho/config/load.go` follows this for the bulk of the config.
+`internal/apps/kaname/config/load.go` follows this for the bulk of the config.
 
-**Divergence**: `MTLSConfig` (`internal/apps/kacho/config/mtls.go`) is loaded by a
+**Divergence**: `MTLSConfig` (`internal/apps/kaname/config/mtls.go`) is loaded by a
 **separate** `envconfig`-based path (`LoadMTLS`), using `envconfig:"…"` struct
 tags, so two config-parsing mechanisms coexist in the same package.
 
@@ -23,7 +23,7 @@ tags (it is a plain cross-service value type), so it cannot be populated through
 the viper/`mapstructure` decoder without either (a) adding `mapstructure` tags to
 a corelib type — a workspace-wide change to a shared horizontal package, owned by
 corelib's release cadence, out of scope for a single service — or (b) hand-writing
-a parallel tagged mirror struct in kacho-iam and copying field-by-field (its own
+a parallel tagged mirror struct in kaname and copying field-by-field (its own
 drift risk). `envconfig` reads the corelib fields directly from the environment
 with zero corelib change, and each mTLS edge is **default-off** (`Enable=false`
 → plaintext, byte-identical to prior behaviour), so the second mechanism governs
@@ -31,9 +31,9 @@ only an opt-in security hardening surface, isolated to this one struct.
 
 **Safety**: the two mechanisms do not overlap — viper/YAML owns all functional
 config; `envconfig` owns *only* the four opt-in mTLS server edges
-(`KACHO_IAM_{PUBLIC,INTERNAL,HOOKS,METRICS}_SERVER_MTLS_*`). There is no field
+(`KANAME_{PUBLIC,INTERNAL,HOOKS,METRICS}_SERVER_MTLS_*`). There is no field
 whose value could be silently shadowed between the two. An operator setting an
-mTLS parameter uses the documented `KACHO_IAM_*_MTLS_*` env vars; these are not
+mTLS parameter uses the documented `KANAME_*_MTLS_*` env vars; these are not
 expressible under a YAML `config:` section by design.
 
 **Convergence path (deferred)**: give `grpcsrv.TLSServer` `mapstructure` tags
@@ -88,7 +88,7 @@ an existing (PENDING) row and succeeds. Bindings carry the internal minted id
 (never a raw external subject), which cannot exist before the principal is
 provisioned — so "forward-referencing a subject that has no row at all" was a
 phantom-grant / typo vector, not a real pre-authorization capability, and is now
-closed. Cross-account subjects live in the same `kacho_iam` DB and are unaffected.
+closed. Cross-account subjects live in the same `kaname` DB and are unaffected.
 
 **Superseded convergence note**: the r2 doc proposed typed nullable FK columns or
 `SERIALIZABLE` as the only race-free options and deferred both. The r3 trigger with
@@ -178,7 +178,7 @@ the model is a hard failure with no environment opt-out.
 ## 5. Fat authz service struct not yet split into per-RPC use-cases (deferred reorg)
 
 **Convention** (evgeniy/godzila regime): one `UseCase` struct + one file per RPC
-(as in `internal/apps/kacho/api/account`).
+(as in `internal/apps/kaname/api/account`).
 
 **Divergence**: `AuthorizeService` (`authorize_service.go`) carries the full authz
 method set on a single struct, and some services keep their use-cases in one file
@@ -200,7 +200,7 @@ refactor-only change (its own PR), to be reviewed in isolation.
 
 ## 6. `access_binding_repo.go` combines row-CRUD with three outbox emitters (deferred reorg)
 
-**Divergence**: `internal/repo/kacho/pg/access_binding_repo.go` (~1.2k LOC) holds
+**Divergence**: `internal/repo/kaname/pg/access_binding_repo.go` (~1.2k LOC) holds
 the access-binding reader/writer plus the subject_change / fga / audit outbox
 emitters and the emitted-tuple bookkeeping in one file, with emitter logic that is
 near-duplicated in `reconcile_adapter.go` / `audit_outbox_emitter.go`.
@@ -229,7 +229,7 @@ Tracked as a dedicated refactor-only change.
 
 ---
 
-## 8. `cmd/kacho-iam/serve.go` `runServe` is a single ~780-line composition root (accepted)
+## 8. `cmd/kaname/serve.go` `runServe` is a single ~780-line composition root (accepted)
 
 **Convention** (Clean-Architecture composition-root rule): `cmd/<svc>/main.go` is
 the single legitimate wiring place; but a function this long cannot be unit-covered
@@ -261,7 +261,7 @@ the reverse. `cluster/ports.go` and `service/governance_ports.go` follow this
 
 **Divergence**: the relation ports `RelationStore` / `RelationQueries` (and the
 plain `RelationTuple` value type) are declared **inside** the adapter package
-`internal/clients`. **43** use-case files under `internal/apps/kacho/api/*`
+`internal/clients`. **43** use-case files under `internal/apps/kaname/api/*`
 (re-measured 2026-08-20; the earlier figure was ~64) import `internal/clients` purely
 to name their port type (`clients.RelationStore` / `clients.RelationQueries` /
 `clients.RelationTuple`), so the use-case layer compile-time-couples to the
@@ -487,7 +487,7 @@ Both changes turn a success into a refusal, which is the fail-closed direction.
 retryable, so a client that polls recovers on its own once the deployment is
 fixed; an empty page gave it nothing to retry.
 
-**Regression**: `services/iam/internal/apps/kacho/api/listvisibility`,
+**Regression**: `services/iam/internal/apps/kaname/api/listvisibility`,
 `TestList645_23b_AnUnwiredRelationPortRefusesRatherThanReportingNothing` and
 `TestList645_16b_SubjectQuestionFailureIsUnavailableNotANarrowedPage` — both run
 all seven surfaces against real Postgres and a real relation store, and both
@@ -505,7 +505,7 @@ _Reviewed 2026-08-18 (task #645, list page is a page of the visible)._
 ## 14. СНЯТО — двери, писавшие кортёж мимо журнала, закрыты (стадия S6)
 
 **Что было расхождением.** Два места писали кортёж во внешний движок отношений напрямую,
-не кладя строку журнала `kacho_iam.fga_outbox`: административный глагол записи кортежей
+не кладя строку журнала `kaname.fga_outbox`: административный глагол записи кортежей
 внутреннего листенера и `InternalIAMService.WriteCreatorTuple`. Поставленный так кортёж
 **не попадал в проекцию `relation_fact` никогда**: движок отвечал «да», своя БД — «нет»,
 и такое расхождение разбирают в правах, а не в наполнении.
@@ -628,7 +628,7 @@ IMG=oryd/hydra:<версия> bash services/iam/scripts/provider-revocation-equi
 
 ## Быстрый путь отзыва `session_revoked` снят вместе со своим триггером (#755)
 
-**Что было.** Триггер на `kacho_iam.session_revocations` слал уведомление в канал
+**Что было.** Триггер на `kaname.session_revocations` слал уведомление в канал
 `session_revoked` на каждую вставку. Производитель работал; слушателей было **ноль
 с первого дня схемы**, и ноль — не «пока не написали», а по построению.
 
@@ -665,14 +665,14 @@ Postgres у края нет ни одного файла, и завести ег
 > [!note] Ради чего эта запись осталась после закрытия предмета
 > Ловится здесь не канал, а КЛАСС: механизм, у которого объявление есть, а производителя
 > эффекта нет. Экземпляров при перемере нашлось **два**, а не один: второй —
-> `kacho_iam_fga_outbox`, чей дренаж снят вместе с внешним движком отношений
+> `kaname_fga_outbox`, чей дренаж снят вместе с внешним движком отношений
 > (задача #1436). Поэтому вместо третьей записи «нашли и починили» заведён гейт, который
 > спрашивает ОБЕ стороны в одном прогоне — живую схему о производителе и дерево о
 > потребителе: `notify_channel_has_a_listener_integration_test.go`,
 > `TestIntegration_EveryProducedNotifyChannelIsNamedByAConsumer`. Прежняя проба того же
 > файла судила ТОЛЬКО производителя и потому осталась бы зелёной на обоих.
 >
-> Второй экземпляр с тех пор **тоже закрыт**: триггер `kacho_iam_fga_outbox` снят
+> Второй экземпляр с тех пор **тоже закрыт**: триггер `kaname_fga_outbox` снят
 > миграцией `20260829123045_intent_journal_channel_retires_with_its_drainer.sql`, его
 > регрессия — `notify_channel_intent_journal_integration_test.go`. Поэтому ведомость
 > прощений гейта сегодня **пуста**, и это его цель, а не недосмотр: прощение снял сам
@@ -818,7 +818,7 @@ git grep -nE "m\.state|memberships\.state|state[ ]*=[ ]*'(PENDING|ACTIVE)'" \
   -- 'services/**/*.go' ':!*_test.go'
 ```
 
-Читатель в дереве **один**: `services/iam/internal/repo/kacho/pg/user_repo.go:273`
+Читатель в дереве **один**: `services/iam/internal/repo/kaname/pg/user_repo.go:273`
 (`userReader.ListAccountsForUser`, отбор `m.state = 'ACTIVE' AND u.invite_status =
 'ACTIVE'`), и до него доходит `WhoAmI`. Остальные попадания предиката — другая
 таблица (`token_signing_keys`) и комментарии. **Его поведение не меняется**:
@@ -897,7 +897,7 @@ git grep -nE "m\.state|memberships\.state|state[ ]*=[ ]*'(PENDING|ACTIVE)'" \
 поданная как account-id, форму проходит и уходит в полосу отсутствия.
 
 **Расхождение.** У семи своих ресурсов iam зовёт собственную
-`shared.ValidateResourceID` (`internal/apps/kacho/shared/ids.go`), которая сверяет
+`shared.ValidateResourceID` (`internal/apps/kaname/shared/ids.go`), которая сверяет
 префикс с **ожидаемым** и требует точной длины.
 
 **Замер на ревизии `74eb331234`** — той, которой этот раздел приехал в линию
@@ -964,6 +964,42 @@ git grep -o 'corevalidate\.ResourceID('   -- 'services/iam/**/*.go' ':!*_test.go
 ровно дефект `resolveVipSources` в nlb, 2026-07-27). Сегодня от этого класса iam
 закрыт **строгой** проверкой в 51 месте; слепая замена завела бы его во все 51.
 
+### У строгости ОДНО исключение — закрытый перечень ПОСЕЯННОГО (задача #1808)
+
+Проверка судит длину **двумя плечами**: чеканная форма `<prefix><17>` **ЛИБО**
+литерал, названный закрытым перечнем `domain.SeededResourceIDs()`. Префикс
+проверяется до обоих плеч, поэтому посеянный id роли не пройдёт там, где ждут
+аккаунт.
+
+**Почему плечо появилось.** Роль `kacho-system.viewer` посеяна **применённой**
+миграцией под идентификатором длиной 21. Строгая проверка стоит первым
+стейтментом каждого глагола роли — значит арендатор получал роль в ответе `List`
+и не мог прочитать её ни `Get`, ни `GetRoleCompiled`, ни `Update`, ни `Delete`,
+ни `ListAccessBindingsByRole`: сервис объявлял `INVALID_ARGUMENT` на id, который
+выдал сам. Соседняя полоса того же механизма (`kacho-system.admin`, длина 20)
+вела себя иначе, и различие никем не решалось.
+
+**Почему не починили посев.** Идентификатор неизменяем на всю жизнь ресурса
+(ban #15 — операции смены id не существует), применённую миграцию править нельзя
+(ban #5), а переименование поздней миграцией есть **перенос выдачи** с роли на
+роль, то есть тихое расширение прав: его отвергает гейт
+`TestNoMigrationMovesGrantsBetweenRoles`.
+
+**Почему перечень, а не ослабление длины.** Ослабление принимало бы любой мусор
+той же длины у **каждого** ресурса. Перечень расширяет приём ровно на строки,
+которые продукт посеял сам: они неизменяемы by construction, снаружи их прислать
+нельзя (id чеканит сервер), и каждая уже лежит в базе. Поверхность приёма растёт
+на **одну** строку с проверенным префиксом.
+
+**Чем держится, что перечень не станет слепой зоной.** `internal/check`,
+`TestSeededIDExceptionsHaveASubject`: каждая запись обязана (а) быть найдена
+посевом миграции и (б) быть **отвергнута** чеканной формой. Запись, которую
+больше не сеет ничто, и запись, которую форма и так принимает, — находки.
+Способность падать и молчать доказана инъекцией по обеим осям, включая пустой
+перечень: он — **цель** гейта, а не поломка. Прежняя ведомость гейта посева
+(`TestSeededResourceIDsPassTheServiceOwnFormCheck`) тем же изменением опустела —
+её механизм самоистечения сам назвал запись, которой больше нечего прощать.
+
 ### Почему решение принято в пользу строгости
 
 - **благо продукта.** Отказ `invalid account id 'prj…'` говорит вызывающему,
@@ -1022,7 +1058,7 @@ by construction — она не знает объявленного вида.
 
 ### Чем держится
 
-`internal/apps/kacho/shared/ids_owner_scope_test.go`,
+`internal/apps/kaname/shared/ids_owner_scope_test.go`,
 `TestStrictIDFormatCheckStaysOwnerScoped` — обходит непроверочное дерево сервиса,
 разбирает исходник (имя функции стоит и в комментариях, и в приёмках, поэтому
 проверка по подстроке краснела бы на собственном объяснении) и требует, чтобы
@@ -1086,7 +1122,7 @@ git grep -n 'codes\.InvalidArgument, "invalid .* id' -- 'services/iam/**/*.go' '
 ведёт себя верно, и запись существует затем, чтобы «решено не выносить»
 перестало быть неотличимым от «ещё не сделано».
 
-**Что.** `kacho_iam.invite_mail_outbox.sent_at` заполняет дренаж в момент сдачи
+**Что.** `kaname.invite_mail_outbox.sent_at` заполняет дренаж в момент сдачи
 письма ретранслятору (`UPDATE … SET sent_at = now()`). На контракт величина не
 выходит НИ ОДНИМ полем. Предикат:
 
@@ -1114,7 +1150,7 @@ git grep -c 'sent_at' -- 'proto/kacho/cloud/iam/**'   # 0
 ### Почему величина не выносится на контракт: она ЭФЕМЕРНА ПО ПОСТРОЕНИЮ
 
 Доставленную строку снимает уборка — она провязана для этой очереди
-(`StartQueueRetentionSweep` в `cmd/kacho-iam/invite_mail_wiring.go`), и это не
+(`StartQueueRetentionSweep` в `cmd/kaname/invite_mail_wiring.go`), и это не
 частность посадки, а необходимость: строка пишется на КАЖДОЕ приглашение, темп
 задаёт арендатор, снятия не было бы ни на одном пути.
 

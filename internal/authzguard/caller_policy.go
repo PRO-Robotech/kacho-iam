@@ -238,7 +238,7 @@ func NewCallerPolicy(prodMode bool, gatewayOnlyRPCs []string) *CallerPolicy {
 // are part of the identity.
 //
 // Blank entries are dropped so an accidentally empty config value
-// (`KACHO_IAM_AUTHN__BOOTSTRAP_MINT__ALLOWED_CLIENT_SANS=""` → [""]) can never
+// (`KANAME_AUTHN__BOOTSTRAP_MINT__ALLOWED_CLIENT_SANS=""` → [""]) can never
 // match a caller whose SAN failed to parse.
 func (p *CallerPolicy) WithSANAllowlist(perRPC map[string][]string) *CallerPolicy {
 	if len(perRPC) == 0 {
@@ -291,7 +291,7 @@ func (p *CallerPolicy) allow(ctx context.Context, fullMethod string) error {
 
 	svc, ok := "", false
 	if verified && san != "" {
-		svc, ok = ServiceNameFromSAN(san)
+		svc, ok = ServiceNameFromSAN(grpcsrv.CertIdentityDomainFromContext(ctx), san)
 	}
 	if !ok {
 		// No verified module cert. Dev → no-op; prod → fail-closed.

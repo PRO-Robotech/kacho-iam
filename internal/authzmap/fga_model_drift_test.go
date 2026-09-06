@@ -31,14 +31,14 @@
 // Их имена здесь намеренно НЕ воспроизводятся обратными кавычками: мёртвое имя,
 // записанное координатой, читается как живое — и гейтом названных целей сборки,
 // и следующим читателем. Вердикт вычисляет форма поверх собственной базы iam
-// (`internal/repo/kacho/pg/relverdict`), и производная у канона осталась одна —
+// (`internal/repo/kaname/pg/relverdict`), и производная у канона осталась одна —
 // вшитая копия выше.
 //
 // THE GATE IS UNCONDITIONAL
 // -------------------------
 // It parses the canonical DSL directly (no Docker → it runs in -short too) and
 // it has NO opt-out: a missing canonical file is a FAILURE, never a skip. The
-// previous revision skipped itself unless KACHO_IAM_REQUIRE_FGA_MODEL was set,
+// previous revision skipped itself unless KANAME_REQUIRE_FGA_MODEL was set,
 // and the file it looked for did not exist in the tree at all — so the gate gave
 // zero protection on every ordinary run while still reporting `ok`. A skipped
 // security gate is neither red nor green; the absence of the source of truth is
@@ -80,7 +80,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/authzmap"
+	"github.com/PRO-Robotech/kaname/internal/authzmap"
 )
 
 // XC-3 S1Ф2: прежде здесь лежал литеральный список `v_*`, продублированный ради

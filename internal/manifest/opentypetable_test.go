@@ -46,8 +46,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/authzmap"
-	"github.com/PRO-Robotech/kacho-iam/internal/manifest"
+	"github.com/PRO-Robotech/kaname/internal/authzmap"
+	"github.com/PRO-Robotech/kaname/internal/manifest"
 )
 
 // acmeWidgetType — тип, которого порождённая сборкой таблица не несёт.
@@ -381,7 +381,7 @@ func TestDeliveryCensusSaysWhetherOwnershipWasGuarded(t *testing.T) {
 	root := deliveryDir(t, map[string]string{"acme/manifest.yaml": acmeResourceManifest})
 
 	guarded := manifest.CheckDelivery(root).Summary()
-	generating := manifest.CheckTreeForGeneration(root).Summary()
+	generating := manifest.CheckSyntheticTreeForGeneration(root).Summary()
 
 	if guarded == generating {
 		t.Fatalf("перепись обеих полос совпала дословно — она не различает, "+

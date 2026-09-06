@@ -14,7 +14,7 @@
 //  4. Allow.
 //
 // Clean Architecture: domain.* + port-ifaces only. Adapter wiring lives in
-// cmd/kacho-iam/main.go.
+// cmd/kaname/main.go.
 //
 // The OPA guardrail overlay step (`data.kacho.iam.guardrails.deny`) was removed.
 // FGA is the sole policy gate; the OPA sidecar and bundle wiring are gone.
@@ -42,10 +42,10 @@ import (
 
 	"github.com/PRO-Robotech/kacho/pkg/grpcsrv"
 
-	"github.com/PRO-Robotech/kacho-iam/internal/authzguard"
-	"github.com/PRO-Robotech/kacho-iam/internal/authztypes"
-	"github.com/PRO-Robotech/kacho-iam/internal/domain"
-	iamerr "github.com/PRO-Robotech/kacho-iam/internal/errors"
+	"github.com/PRO-Robotech/kaname/internal/authzguard"
+	"github.com/PRO-Robotech/kaname/internal/authztypes"
+	"github.com/PRO-Robotech/kaname/internal/domain"
+	iamerr "github.com/PRO-Robotech/kaname/internal/errors"
 )
 
 // serverAuthoritativeCondKeys are CEL condition-context attributes that describe
